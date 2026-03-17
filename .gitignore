@@ -1,0 +1,33 @@
+# Dependências
+node_modules/
+.expo/
+
+# Ambiente
+.env
+.env.local
+.env.production
+
+# Build
+dist/
+build/
+android/app/build/
+ios/build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Keys e secrets
+*.pem
+*.keystore
+google-services.json
+GoogleService-Info.plist

@@ -1,0 +1,11 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: #0c0b10;
+}
+
+* {
+  box-sizing: border-box;
+}

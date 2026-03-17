@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "FocusLock",
+    "slug": "focuslock",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0c0b10"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.focuslock.app",
+      "permissions": [
+        "CAMERA"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.focuslock.app"
+    }
+  }
+}

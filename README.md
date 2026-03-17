@@ -53,6 +53,14 @@ FocusLock resolve isso com uma premissa simples: **a tela só abre quando uma IA
 
 `[ ] MVP em desenvolvimento`
 
+## MVP Mobile Atual
+
+O caminho principal de desenvolvimento agora esta em `mobile/` com Expo (React Native), pronto para teste em celular com Expo Go.
+
+- Entrada do app: `mobile/App.js`
+- Fluxo principal: `mobile/src/FocusLockMobileApp.js`
+- Guia de execucao: `mobile/README.md`
+
 Veja [ROADMAP.md](./ROADMAP.md) para o detalhamento completo.
 
 ---

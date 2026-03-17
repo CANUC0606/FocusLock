@@ -20,6 +20,12 @@
     },
     "ios": {
       "bundleIdentifier": "com.focuslock.app"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "5c96d52c-7ebe-4087-86a3-df5263385d1d"
+      }
+    },
+    "owner": "canucavai"
   }
 }

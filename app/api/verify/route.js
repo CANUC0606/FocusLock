@@ -8,7 +8,6 @@ const DEFAULT_THRESHOLD = Number(process.env.AI_CONFIDENCE_THRESHOLD || 60);
 
 function clampScore(value) {
   const score = Number(value);
-
   if (Number.isNaN(score)) return 0;
   return Math.max(0, Math.min(100, Math.round(score)));
 }
@@ -20,7 +19,6 @@ function toSafeString(value, fallback = "") {
 function extractImagePayload(body = {}) {
   if (typeof body.imageDataUrl === "string" && body.imageDataUrl.startsWith("data:")) {
     const match = body.imageDataUrl.match(/^data:(.+);base64,(.+)$/);
-
     if (match) {
       return {
         mimeType: match[1],
@@ -46,6 +44,8 @@ function normalizeTask(task = {}) {
     descricao_evidencia: toSafeString(task.evidence || task.desc || task.descricao_evidencia, "Evidencia visual da tarefa concluida"),
     categoria: toSafeString(task.category || task.categoria, "work"),
     horario_comprometido: toSafeString(task.time || task.horario, ""),
+    codigo_desafio: toSafeString(task.challengeCode || task.codigo_desafio, ""),
+    bloqueio_iniciado_em: toSafeString(task.lockStartedAt || task.bloqueio_iniciado_em, ""),
   };
 }
 
@@ -56,40 +56,54 @@ function mapHistoryItem(item = {}) {
     aprovado: Boolean(item.approved ?? item.aprovado),
     confianca: clampScore(item.confidence ?? item.confianca),
     notas: toSafeString(item.notes || item.notas_aprendizado || item.notas, ""),
+    imagem_hash: toSafeString(item.image_hash || item.imagem_hash, ""),
   };
 }
 
 function selectRelevantHistory(history = [], category = "") {
   const clean = history.filter((item) => item && typeof item === "object").map(mapHistoryItem);
-
   const sameCategory = clean.filter((item) => item.categoria === category).slice(0, 20);
   const otherCategories = clean.filter((item) => item.categoria !== category).slice(0, 10);
-
   return [...sameCategory, ...otherCategories];
 }
 
-function normalizeVerification(raw = {}, threshold = DEFAULT_THRESHOLD) {
+function normalizeVerification(raw = {}, { threshold = DEFAULT_THRESHOLD, task = {}, tentativasSessao = 1 } = {}) {
+  const thresholdAjustado = Math.min(90, threshold + (Number(tentativasSessao) >= 3 ? 5 : 0));
   const confianca = clampScore(raw.confianca);
-  const aprovadoDoModelo = typeof raw.aprovado === "boolean" ? raw.aprovado : confianca >= threshold;
-  const aprovado = aprovadoDoModelo && confianca >= threshold;
+  const flagFraude = Boolean(raw.flag_fraude);
+  const codigoDesafio = toSafeString(task.codigo_desafio, "");
+  const codigoDetectado = Boolean(raw.codigo_desafio_detectado);
 
-  const reasonFromThreshold = !aprovado && confianca < threshold ? `Confianca abaixo do minimo (${threshold}).` : null;
+  const aprovadoDoModelo = typeof raw.aprovado === "boolean" ? raw.aprovado : confianca >= thresholdAjustado;
+  const aprovado = aprovadoDoModelo && confianca >= thresholdAjustado;
+  const challengeOk = !codigoDesafio || codigoDetectado;
+  const aprovadoFinal = !flagFraude && challengeOk && aprovado;
+
+  const reasonFromThreshold = !aprovadoFinal && confianca < thresholdAjustado
+    ? `Confianca abaixo do minimo (${thresholdAjustado}).`
+    : null;
+  const reasonFromFraud = flagFraude ? "Evidencia suspeita de reutilizacao ou fraude." : null;
+  const reasonFromChallenge = !challengeOk ? "Codigo de desafio nao identificado na evidencia." : null;
 
   return {
-    aprovado,
+    aprovado: aprovadoFinal,
     confianca,
-    mensagem: toSafeString(raw.mensagem, aprovado ? "Evidencia aceita." : "Evidencia insuficiente. Tente novamente."),
+    mensagem: toSafeString(raw.mensagem, aprovadoFinal ? "Evidencia aceita." : "Evidencia insuficiente. Tente novamente."),
     ocr_detectado: toSafeString(raw.ocr_detectado),
     objetos_detectados: Array.isArray(raw.objetos_detectados)
       ? raw.objetos_detectados.filter((item) => typeof item === "string" && item.trim())
       : [],
     notas_aprendizado: toSafeString(raw.notas_aprendizado),
-    motivo_rejeicao: aprovado ? null : toSafeString(raw.motivo_rejeicao, reasonFromThreshold || "Evidencia insuficiente."),
-    threshold,
+    motivo_rejeicao: aprovadoFinal
+      ? null
+      : toSafeString(raw.motivo_rejeicao, reasonFromFraud || reasonFromChallenge || reasonFromThreshold || "Evidencia insuficiente."),
+    flag_fraude: flagFraude,
+    codigo_desafio_detectado: challengeOk,
+    threshold: thresholdAjustado,
   };
 }
 
-function buildPrompt({ task, history, profile }) {
+function buildPrompt({ task, history, profile, tentativasSessao, contextoBloqueio }) {
   return [
     "Contexto da verificacao FocusLock:",
     JSON.stringify(
@@ -97,6 +111,8 @@ function buildPrompt({ task, history, profile }) {
         contexto: task,
         historico_aprendizado: history,
         perfil_usuario: profile || {},
+        tentativas_nesta_sessao: tentativasSessao,
+        contexto_bloqueio: contextoBloqueio || {},
       },
       null,
       2,
@@ -112,6 +128,8 @@ function buildPrompt({ task, history, profile }) {
         objetos_detectados: ["string"],
         notas_aprendizado: "string",
         motivo_rejeicao: null,
+        flag_fraude: false,
+        codigo_desafio_detectado: true,
       },
       null,
       2,
@@ -119,7 +137,9 @@ function buildPrompt({ task, history, profile }) {
     "",
     "Regras:",
     "- Seja justo e nao punitivo: aceite evidencia razoavel.",
+    "- Se existir codigo_desafio no contexto, confirme visualmente via OCR; se nao houver, rejeite.",
     "- Rejeite atalho obvio (foto de tela/foto de foto).",
+    "- Se parecer imagem antiga ou fora do contexto temporal do bloqueio, marque flag_fraude=true.",
     "- Se faltar evidencia, explique como melhorar a proxima foto.",
     "- Retorne apenas JSON valido.",
   ].join("\n");
@@ -135,7 +155,6 @@ export async function POST(request) {
   }
 
   const imagePayload = extractImagePayload(body);
-
   if (!imagePayload?.base64) {
     return NextResponse.json({ error: "Imagem em base64 obrigatoria" }, { status: 400 });
   }
@@ -150,14 +169,41 @@ export async function POST(request) {
   }
 
   const task = normalizeTask(body.activeTask || body.contexto || {});
-  const history = selectRelevantHistory(body.history || body.historico_aprendizado || [], task.categoria);
+  const contextoBloqueio = body.contexto_bloqueio || {};
+  const rawHistory = Array.isArray(body.history || body.historico_aprendizado)
+    ? (body.history || body.historico_aprendizado)
+    : [];
+  const history = selectRelevantHistory(rawHistory, task.categoria);
   const profile = body.profile || body.perfil_usuario || {};
-  let imageHash;
 
+  let imageHash;
   try {
     imageHash = createHash("sha256").update(Buffer.from(imagePayload.base64, "base64")).digest("hex");
   } catch {
     return NextResponse.json({ error: "Imagem base64 invalida" }, { status: 400 });
+  }
+
+  const duplicateDetected = rawHistory.some((item) => {
+    const candidate = toSafeString(item?.image_hash || item?.imagem_hash, "");
+    return Boolean(candidate) && candidate === imageHash;
+  });
+
+  if (duplicateDetected) {
+    return NextResponse.json({
+      verification: {
+        aprovado: false,
+        confianca: 20,
+        mensagem: "Essa evidencia parece reutilizada. Tire uma nova foto da tarefa agora.",
+        ocr_detectado: "",
+        objetos_detectados: [],
+        notas_aprendizado: "Rejeicao por hash de imagem repetido no historico.",
+        motivo_rejeicao: "Evidencia reutilizada detectada.",
+        flag_fraude: true,
+        threshold: DEFAULT_THRESHOLD,
+        image_hash: imageHash,
+      },
+      source: "anti-fraud",
+    });
   }
 
   try {
@@ -174,7 +220,13 @@ export async function POST(request) {
           content: [
             {
               type: "text",
-              text: buildPrompt({ task, history, profile }),
+              text: buildPrompt({
+                task,
+                history,
+                profile,
+                tentativasSessao: Number(body?.tentativas_nesta_sessao || 1),
+                contextoBloqueio,
+              }),
             },
             {
               type: "image",
@@ -192,7 +244,11 @@ export async function POST(request) {
     });
 
     const parsed = parseJsonFromModelText(rawText);
-    const verification = normalizeVerification(parsed, DEFAULT_THRESHOLD);
+    const verification = normalizeVerification(parsed, {
+      threshold: DEFAULT_THRESHOLD,
+      task,
+      tentativasSessao: Number(body?.tentativas_nesta_sessao || 1),
+    });
 
     return NextResponse.json({
       verification: {

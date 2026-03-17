@@ -42,12 +42,14 @@ export async function analyzeOnboarding(answers) {
   return postJson("/api/onboarding", { answers });
 }
 
-export async function verifyEvidence({ imageBase64, imageMimeType = "image/jpeg", activeTask, history, profile }) {
+export async function verifyEvidence({ imageBase64, imageMimeType = "image/jpeg", activeTask, history, profile, attemptsThisSession = 1, lockContext = {} }) {
   return postJson("/api/verify", {
     imageBase64,
     imageMimeType,
     activeTask,
     history,
     profile,
+    tentativas_nesta_sessao: attemptsThisSession,
+    contexto_bloqueio: lockContext,
   });
 }
